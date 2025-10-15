@@ -9,7 +9,7 @@ st.set_page_config(page_title="Stock Variance Dashboard", layout="wide")
 # --- Load Data Function ---
 @st.cache_data
 def load_data():
-    file_path = "stock_data.xlsx"  # Replace with your Excel file path
+    file_path = "stock_data.Xlsx"  # Your Excel file
     if not os.path.exists(file_path):
         st.error("❌ File not found. Please check the path.")
         st.stop()
@@ -17,6 +17,7 @@ def load_data():
     df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip()
 
+    # Create Diff Stock column if not present
     if 'Diff Stock' not in df.columns:
         df['Diff Stock'] = df['Phys Stock'] - df['Book Stock']
 
