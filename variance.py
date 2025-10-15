@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import os
 
 # --- Page Config ---
 st.set_page_config(page_title="Stock Variance Dashboard", layout="wide")
@@ -8,7 +9,12 @@ st.set_page_config(page_title="Stock Variance Dashboard", layout="wide")
 # --- Load Data Function ---
 @st.cache_data
 def load_data():
-    df = pd.read_excel("stock_data.Xlsx")  # Replace with your Excel file path
+    file_path = "stock_data.xlsx"  # Replace with your Excel file path
+    if not os.path.exists(file_path):
+        st.error("❌ File not found. Please check the path.")
+        st.stop()
+    
+    df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip()
 
     if 'Diff Stock' not in df.columns:
@@ -19,19 +25,43 @@ def load_data():
     df['Phys Value'] = df['Phys Stock'] * df[cost_col]
     df['Diff Value'] = df['Diff Stock'] * df[cost_col]
 
+    # Ensure numeric columns
+    num_cols = ['Book Stock','Phys Stock','Diff Stock','Book Value','Phys Value','Diff Value']
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
     return df
 
 df = load_data()
 
 # --- Sidebar Filters ---
 st.sidebar.header("Filters")
-categories = df['Category'].unique().tolist()
-selected_category = st.sidebar.selectbox("Select Category", ["All"] + categories)
+categories = ["All"] + sorted(df['Category'].dropna().unique().tolist())
+selected_category = st.sidebar.selectbox("Select Category", categories)
+
+search_item = st.sidebar.text_input("Search Item Name").strip().lower()
+search_barcode = st.sidebar.text_input("Search Barcode").strip()
 
 # --- Filtered Data ---
 filtered_df = df.copy()
+
 if selected_category != "All":
     filtered_df = filtered_df[filtered_df['Category'] == selected_category]
+
+if search_item:
+    filtered_df = filtered_df[
+        filtered_df['Item Name'].str.lower().str.contains(search_item, na=False)
+    ]
+
+if search_barcode:
+    filtered_df = filtered_df[
+        filtered_df['Barcode'].astype(str).str.contains(search_barcode, na=False)
+    ]
+
+if filtered_df.empty:
+    st.warning("🚫 No items found for your filters/search.")
+    st.stop()
 
 # --- Summary Metrics ---
 total_book_stock = filtered_df['Book Stock'].sum()
@@ -42,9 +72,7 @@ total_book_value = filtered_df['Book Value'].sum()
 total_phys_value = filtered_df['Phys Value'].sum()
 total_diff_value = filtered_df['Diff Value'].sum()
 
-stock_variance_pct = (
-    (total_diff_stock / total_book_stock) * 100 if total_book_stock != 0 else 0
-)
+stock_variance_pct = (total_diff_stock / total_book_stock * 100) if total_book_stock != 0 else 0
 
 # --- Dashboard Title ---
 st.title("📊 Stock Variance Dashboard")
@@ -84,7 +112,7 @@ with col4:
         unsafe_allow_html=True
     )
 
-st.markdown("---")  # Space after summary
+st.markdown("---")
 
 # --- Top 30 by quantity ---
 filtered_df['Abs Diff'] = filtered_df['Diff Stock'].abs()
@@ -128,8 +156,14 @@ fig_qty.add_trace(go.Bar(
     ),
     customdata=top_30_qty[['Category','Item No','Barcode','Book Stock','Phys Stock','Diff Stock']]
 ))
-fig_qty.update_layout(barmode='group', yaxis=dict(autorange='reversed'), xaxis_title="Quantity / Value",
-                      height=800, legend_title="Metrics", margin=dict(t=20, b=20))
+fig_qty.update_layout(
+    barmode='group',
+    yaxis=dict(autorange='reversed'),
+    xaxis_title="Quantity / Value",
+    height=800,
+    legend_title="Metrics",
+    margin=dict(t=20, b=20)
+)
 st.plotly_chart(fig_qty, use_container_width=True)
 
 # --- Top 30 Table by quantity ---
@@ -138,7 +172,7 @@ key_columns = ['Category', 'Item Name', 'Item No', 'Barcode', 'Book Stock', 'Phy
 available_columns = [col for col in key_columns if col in top_30_qty.columns]
 st.dataframe(top_30_qty[available_columns])
 
-st.markdown("---")  # Space
+st.markdown("---")
 
 # --- Top 30 by value ---
 top_30_value = filtered_df.sort_values('Diff Value', ascending=False).head(30)
@@ -180,8 +214,14 @@ fig_val.add_trace(go.Bar(
     ),
     customdata=top_30_value[['Category','Item No','Barcode','Book Stock','Phys Stock','Diff Stock']]
 ))
-fig_val.update_layout(barmode='group', yaxis=dict(autorange='reversed'), xaxis_title="Quantity / Value",
-                      height=800, legend_title="Metrics", margin=dict(t=20, b=20))
+fig_val.update_layout(
+    barmode='group',
+    yaxis=dict(autorange='reversed'),
+    xaxis_title="Quantity / Value",
+    height=800,
+    legend_title="Metrics",
+    margin=dict(t=20, b=20)
+)
 st.plotly_chart(fig_val, use_container_width=True)
 
 # --- Top 30 Table by value ---
@@ -189,7 +229,7 @@ st.subheader("📄 Top 30 Items Details (Value Priority)")
 available_columns_value = [col for col in key_columns if col in top_30_value.columns]
 st.dataframe(top_30_value[available_columns_value])
 
-st.markdown("---")  # Space
+st.markdown("---")
 
 # --- Remaining data table ---
 st.subheader("📄 All Remaining Items by Category")
