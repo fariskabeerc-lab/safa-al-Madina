@@ -1,238 +1,173 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-import os
+import plotly.express as px
 
-# --- Page Config ---
-st.set_page_config(page_title="Stock Variance Dashboard", layout="wide")
+# ================================
+# Page Config
+# ================================
+st.set_page_config(page_title="Sales & Profit Dashboard", layout="wide")
+st.title("📊 Sales & Profit Insights (Jul–Sep)")
 
-# --- Load Data Function ---
+# ================================
+# Load Data
+# ================================
 @st.cache_data
-def load_data():
-    file_path = "stock_data.Xlsx"  # Your Excel file
-    if not os.path.exists(file_path):
-        st.error("❌ File not found. Please check the path.")
-        st.stop()
-    
+def load_sales_data(file_path):
     df = pd.read_excel(file_path)
-    df.columns = df.columns.str.strip()
+    df["Item Code"] = df["Item Code"].astype(str)
+    return df.fillna(0)
 
-    # Create Diff Stock column if not present
-    if 'Diff Stock' not in df.columns:
-        df['Diff Stock'] = df['Phys Stock'] - df['Book Stock']
+@st.cache_data
+def load_price_list(file_path):
+    df = pd.read_excel(file_path)
+    df["Item Bar Code"] = df["Item Bar Code"].astype(str)
+    return df.fillna(0)
 
-    cost_col = "Cost Price"  # Adjust if your Excel has a different name
-    df['Book Value'] = df['Book Stock'] * df[cost_col]
-    df['Phys Value'] = df['Phys Stock'] * df[cost_col]
-    df['Diff Value'] = df['Diff Stock'] * df[cost_col]
+# ================================
+# File paths
+# ================================
+sales_file = "july to sep safa2025.Xlsx"
+price_file = "price list.xlsx"
 
-    # Ensure numeric columns
-    num_cols = ['Book Stock','Phys Stock','Diff Stock','Book Value','Phys Value','Diff Value']
-    for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+sales_df = load_sales_data(sales_file)
+price_df = load_price_list(price_file)
 
+# ================================
+# Clean & Prepare Data
+# ================================
+sales_cols = [
+    "Jul-2025 Total Sales", "Jul-2025 Total Profit",
+    "Aug-2025 Total Sales", "Aug-2025 Total Profit",
+    "Sep-2025 Total Sales", "Sep-2025 Total Profit"
+]
+for col in sales_cols:
+    if col not in sales_df.columns:
+        sales_df[col] = 0
+
+# Merge both datasets initially (base data)
+merged_df = pd.merge(price_df, sales_df, left_on="Item Bar Code", right_on="Item Code", how="left")
+merged_df.fillna(0, inplace=True)
+
+if "Category" not in merged_df.columns:
+    merged_df["Category"] = "Unknown"
+else:
+    merged_df["Category"] = merged_df["Category"].astype(str).replace("", "Unknown")
+
+# ================================
+# Sidebar Filters
+# ================================
+st.sidebar.header("🔍 Filters")
+
+# Search inputs
+item_search = st.sidebar.text_input("Search Item Name")
+barcode_search = st.sidebar.text_input("Search Item Bar Code")
+
+# Category filter
+all_categories = ["All"] + sorted(merged_df["Category"].dropna().unique().tolist())
+selected_category = st.sidebar.selectbox("Select Category", all_categories)
+
+# ================================
+# Apply Filters
+# ================================
+filtered_df = merged_df.copy()
+
+# Category filter first
+if selected_category != "All":
+    filtered_df = filtered_df[filtered_df["Category"] == selected_category]
+
+# Search filters next
+if item_search:
+    filtered_df = filtered_df[filtered_df["Item Name"].astype(str).str.contains(item_search, case=False, na=False)]
+if barcode_search:
+    filtered_df = filtered_df[filtered_df["Item Bar Code"].astype(str).str.contains(barcode_search, case=False, na=False)]
+
+# ================================
+# Compute Totals
+# ================================
+def compute_totals(df):
+    df["Total Sales"] = df["Jul-2025 Total Sales"] + df["Aug-2025 Total Sales"] + df["Sep-2025 Total Sales"]
+    df["Total Profit"] = df["Jul-2025 Total Profit"] + df["Aug-2025 Total Profit"] + df["Sep-2025 Total Profit"]
+    df["Overall GP"] = df.apply(lambda x: (x["Total Profit"] / x["Total Sales"]) if x["Total Sales"] != 0 else 0, axis=1)
     return df
 
-df = load_data()
+filtered_df = compute_totals(filtered_df)
 
-# --- Sidebar Filters ---
-st.sidebar.header("Filters")
-categories = ["All"] + sorted(df['Category'].dropna().unique().tolist())
-selected_category = st.sidebar.selectbox("Select Category", categories)
+# ================================
+# Key Metrics
+# ================================
+st.markdown(f"### 🔑 Key Metrics {'(All Categories)' if selected_category == 'All' else f'({selected_category})'}")
 
-search_item = st.sidebar.text_input("Search Item Name").strip().lower()
-search_barcode = st.sidebar.text_input("Search Barcode").strip()
+total_sales = filtered_df["Total Sales"].sum()
+total_profit = filtered_df["Total Profit"].sum()
+overall_gp = (total_profit / total_sales) if total_sales != 0 else 0
 
-# --- Filtered Data ---
-filtered_df = df.copy()
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Sales", f"{total_sales:,.0f}")
+col2.metric("Total Profit", f"{total_profit:,.0f}")
+col3.metric("Overall GP", f"{overall_gp:.2%}")
 
-if selected_category != "All":
-    filtered_df = filtered_df[filtered_df['Category'] == selected_category]
+# ================================
+# Monthly Performance
+# ================================
+st.markdown("### 📅 Month-wise Performance")
 
-if search_item:
-    filtered_df = filtered_df[
-        filtered_df['Item Name'].str.lower().str.contains(search_item, na=False)
-    ]
+months = ["Jul-2025", "Aug-2025", "Sep-2025"]
+month_data = []
+for month in months:
+    sales_col = f"{month} Total Sales"
+    profit_col = f"{month} Total Profit"
+    month_data.append({"Month": month, "Type": "Sales", "Value": filtered_df[sales_col].sum()})
+    month_data.append({"Month": month, "Type": "Profit", "Value": filtered_df[profit_col].sum()})
 
-if search_barcode:
-    filtered_df = filtered_df[
-        filtered_df['Barcode'].astype(str).str.contains(search_barcode, na=False)
-    ]
-
-if filtered_df.empty:
-    st.warning("🚫 No items found for your filters/search.")
-    st.stop()
-
-# --- Summary Metrics ---
-total_book_stock = filtered_df['Book Stock'].sum()
-total_phys_stock = filtered_df['Phys Stock'].sum()
-total_diff_stock = filtered_df['Diff Stock'].sum()
-
-total_book_value = filtered_df['Book Value'].sum()
-total_phys_value = filtered_df['Phys Value'].sum()
-total_diff_value = filtered_df['Diff Value'].sum()
-
-stock_variance_pct = (total_diff_stock / total_book_stock * 100) if total_book_stock != 0 else 0
-
-# --- Dashboard Title ---
-st.title("📊 Stock Variance Dashboard")
-
-# --- Summary Section ---
-st.markdown("### 📊 Stock Summary")
-col1, col2, col3, col4 = st.columns(4, gap="large")
-
-with col1:
-    st.markdown(
-        f"<h5>System Stock</h5>"
-        f"<p style='font-size:28px; font-weight:bold;'>{total_book_stock:,.0f}</p>"
-        f"<p style='font-size:14px; color:gray;'>AED {total_book_value:,.0f}</p>",
-        unsafe_allow_html=True
-    )
-
-with col2:
-    st.markdown(
-        f"<h5>Physical Stock</h5>"
-        f"<p style='font-size:28px; font-weight:bold;'>{total_phys_stock:,.0f}</p>"
-        f"<p style='font-size:14px; color:gray;'>AED {total_phys_value:,.0f}</p>",
-        unsafe_allow_html=True
-    )
-
-with col3:
-    st.markdown(
-        f"<h5>Stock Difference</h5>"
-        f"<p style='font-size:28px; font-weight:bold;'>{total_diff_stock:,.0f}</p>"
-        f"<p style='font-size:14px; color:gray;'>AED {total_diff_value:,.0f}</p>",
-        unsafe_allow_html=True
-    )
-
-with col4:
-    st.markdown(
-        f"<h5>Stock Variance %</h5>"
-        f"<p style='font-size:28px; font-weight:bold;'>{stock_variance_pct:.2f} %</p>",
-        unsafe_allow_html=True
-    )
-
-st.markdown("---")
-
-# --- Top 30 by quantity ---
-filtered_df['Abs Diff'] = filtered_df['Diff Stock'].abs()
-top_30_qty = filtered_df.sort_values('Abs Diff', ascending=False).head(30)
-
-st.subheader("Top 30 Items: Quantity vs Value")
-fig_qty = go.Figure()
-fig_qty.add_trace(go.Bar(
-    y=top_30_qty['Item Name'],
-    x=top_30_qty['Diff Stock'],
-    name='Stock Difference (Qty)',
-    orientation='h',
-    marker_color='steelblue',
-    hovertemplate=(
-        "<b>%{y}</b><br>" +
-        "Category: %{customdata[0]}<br>" +
-        "Item No: %{customdata[1]}<br>" +
-        "Barcode: %{customdata[2]}<br>" +
-        "Book Stock: %{customdata[3]}<br>" +
-        "Phys Stock: %{customdata[4]}<br>" +
-        "Stock Diff: %{x}<br>" +
-        "Stock Diff Value: AED %{customdata[5]:,.0f}<extra></extra>"
-    ),
-    customdata=top_30_qty[['Category','Item No','Barcode','Book Stock','Phys Stock','Diff Value']]
-))
-fig_qty.add_trace(go.Bar(
-    y=top_30_qty['Item Name'],
-    x=top_30_qty['Diff Value'],
-    name='Stock Difference Value (AED)',
-    orientation='h',
-    marker_color='orange',
-    hovertemplate=(
-        "<b>%{y}</b><br>" +
-        "Category: %{customdata[0]}<br>" +
-        "Item No: %{customdata[1]}<br>" +
-        "Barcode: %{customdata[2]}<br>" +
-        "Book Stock: %{customdata[3]}<br>" +
-        "Phys Stock: %{customdata[4]}<br>" +
-        "Stock Diff: %{customdata[5]}<br>" +
-        "Stock Diff Value: AED %{x:,.0f}<extra></extra>"
-    ),
-    customdata=top_30_qty[['Category','Item No','Barcode','Book Stock','Phys Stock','Diff Stock']]
-))
-fig_qty.update_layout(
-    barmode='group',
-    yaxis=dict(autorange='reversed'),
-    xaxis_title="Quantity / Value",
-    height=800,
-    legend_title="Metrics",
-    margin=dict(t=20, b=20)
+monthly_df = pd.DataFrame(month_data)
+fig_monthly = px.bar(
+    monthly_df, x="Month", y="Value", color="Type", barmode="group",
+    text="Value", title=f"Monthly Sales & Profit ({selected_category})"
 )
-st.plotly_chart(fig_qty, use_container_width=True)
+st.plotly_chart(fig_monthly, use_container_width=True)
 
-# --- Top 30 Table by quantity ---
-st.subheader("📄 Top 30 Items Details (Quantity Priority)")
-key_columns = ['Category', 'Item Name', 'Item No', 'Barcode', 'Book Stock', 'Phys Stock', 'Diff Stock', 'Book Value', 'Phys Value', 'Diff Value']
-available_columns = [col for col in key_columns if col in top_30_qty.columns]
-st.dataframe(top_30_qty[available_columns])
+# ================================
+# Category-wise Summary
+# ================================
+category_summary = merged_df.groupby("Category").agg({
+    "Total Sales": "sum",
+    "Total Profit": "sum"
+}).reset_index()
+category_summary["GP%"] = category_summary["Total Profit"] / category_summary["Total Sales"].replace(0, 1)
 
-st.markdown("---")
+st.markdown("### 🏷 Category-wise Overview")
 
-# --- Top 30 by value ---
-top_30_value = filtered_df.sort_values('Diff Value', ascending=False).head(30)
-st.subheader("Top 30 Items: Value Priority")
-fig_val = go.Figure()
-fig_val.add_trace(go.Bar(
-    y=top_30_value['Item Name'],
-    x=top_30_value['Diff Stock'],
-    name='Stock Difference (Qty)',
-    orientation='h',
-    marker_color='steelblue',
-    hovertemplate=(
-        "<b>%{y}</b><br>" +
-        "Category: %{customdata[0]}<br>" +
-        "Item No: %{customdata[1]}<br>" +
-        "Barcode: %{customdata[2]}<br>" +
-        "Book Stock: %{customdata[3]}<br>" +
-        "Phys Stock: %{customdata[4]}<br>" +
-        "Stock Diff: %{x}<br>" +
-        "Stock Diff Value: AED %{customdata[5]:,.0f}<extra></extra>"
-    ),
-    customdata=top_30_value[['Category','Item No','Barcode','Book Stock','Phys Stock','Diff Value']]
-))
-fig_val.add_trace(go.Bar(
-    y=top_30_value['Item Name'],
-    x=top_30_value['Diff Value'],
-    name='Stock Difference Value (AED)',
-    orientation='h',
-    marker_color='orange',
-    hovertemplate=(
-        "<b>%{y}</b><br>" +
-        "Category: %{customdata[0]}<br>" +
-        "Item No: %{customdata[1]}<br>" +
-        "Barcode: %{customdata[2]}<br>" +
-        "Book Stock: %{customdata[3]}<br>" +
-        "Phys Stock: %{customdata[4]}<br>" +
-        "Stock Diff: %{customdata[5]}<br>" +
-        "Stock Diff Value: AED %{x:,.0f}<extra></extra>"
-    ),
-    customdata=top_30_value[['Category','Item No','Barcode','Book Stock','Phys Stock','Diff Stock']]
-))
-fig_val.update_layout(
-    barmode='group',
-    yaxis=dict(autorange='reversed'),
-    xaxis_title="Quantity / Value",
-    height=800,
-    legend_title="Metrics",
-    margin=dict(t=20, b=20)
-)
-st.plotly_chart(fig_val, use_container_width=True)
+fig_sales = px.bar(category_summary, x="Category", y="Total Sales", color="Total Sales",
+                   text="Total Sales", title="Total Sales by Category")
+st.plotly_chart(fig_sales, use_container_width=True)
 
-# --- Top 30 Table by value ---
-st.subheader("📄 Top 30 Items Details (Value Priority)")
-available_columns_value = [col for col in key_columns if col in top_30_value.columns]
-st.dataframe(top_30_value[available_columns_value])
+fig_profit = px.bar(category_summary, x="Category", y="Total Profit", color="Total Profit",
+                    text="Total Profit", title="Total Profit by Category")
+st.plotly_chart(fig_profit, use_container_width=True)
 
-st.markdown("---")
+fig_gp = px.bar(category_summary, x="Category", y="GP% ", color="GP% ",
+                text=category_summary["GP%"].apply(lambda x: f"{x:.2%}"),
+                title="Gross Profit % by Category")
+st.plotly_chart(fig_gp, use_container_width=True)
 
-# --- Remaining data table ---
-st.subheader("📄 All Remaining Items by Category")
-remaining_df = filtered_df.drop(top_30_qty.index.union(top_30_value.index))
-st.dataframe(remaining_df[available_columns].sort_values(['Category','Diff Stock'], ascending=[True, False]))
+# ================================
+# Item-wise Table
+# ================================
+st.markdown("### 📝 Item-wise Details")
+
+table_cols = [
+    "Item Bar Code", "Item Name", "Category", "Cost", "Selling", "Stock",
+    "Total Sales", "Total Profit", "Overall GP",
+    "Jul-2025 Total Sales", "Jul-2025 Total Profit",
+    "Aug-2025 Total Sales", "Aug-2025 Total Profit",
+    "Sep-2025 Total Sales", "Sep-2025 Total Profit"
+]
+
+for col in table_cols:
+    if col not in filtered_df.columns:
+        filtered_df[col] = 0
+
+filtered_df["Overall GP"] = filtered_df["Overall GP"].apply(lambda x: f"{x:.2%}")
+
+st.dataframe(filtered_df[table_cols].sort_values("Total Sales", ascending=False),
+             use_container_width=True, hide_index=True)
